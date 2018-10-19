@@ -385,7 +385,7 @@ def _run_process(cmd, splitlines=True):
         stderr = subprocess.STDOUT,
         shell = True
     )
-    output = process.communicate()[0]
+    output = process.communicate()[0].decode('ascii', 'ignore')
     exit_code = process.returncode
     if splitlines:
         return (output.splitlines(), exit_code)
@@ -720,7 +720,6 @@ def setup_jinja():
         else:
             jinja_env.globals['fqdn']           = fqdn
             jinja_env.globals['hostname']       = hostname
-        jinja_env.globals['network_interfaces'] = network_interfaces
 
         # Custom functions
         jinja_env.globals['domain_join']   = _domain_join
@@ -764,9 +763,14 @@ def translate_templates():
             sys.exit(5)
         try:
             try:
-                this = next(t for t in template_conf['templates'] if ('template' in t and t['template'] == filename) and t['file'] == os.path.basename(output_path))
+                this = next(t for t in template_conf['templates'] if ('template' in t and t['template'] == rel_path) and t['file'] == output_path)
             except StopIteration as e:
-                this = next(t for t in template_conf['templates'] if t['file'] == filename)
+                try:
+                    this = next(t for t in template_conf['templates'] if t['file'] == output_path)
+                except StopIteration as e2:
+                    printe(_subsubstep('Unable to render template - unable to match "this" variable to list item in "templates" specification.', C_RED))
+                    logging.critical('Unable to render template - unable to match "this" variable to list item in "templates" specification.')
+                    sys.exit(5)
             modified_conf = template_conf.copy()
             modified_conf['this'] = this
             modified_conf['file'] = filename
