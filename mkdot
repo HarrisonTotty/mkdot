@@ -1,0 +1,997 @@
+#!/bin/env python3
+'''
+"mkdot"
+
+The handy dotfile templating system.
+'''
+
+# ------- Python Library Imports -------
+
+# Standard Library
+import argparse
+import glob
+import logging
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+
+# Additional Dependencies
+try:
+    import jinja2
+except ImportError as e:
+    sys.exit('Unable to import Jinja2 library - ' + str(e) + '.')
+try:
+    import yaml
+except ImportError as e:
+    sys.exit('Unable to import PyYAML library - ' + str(e) + '.')
+
+# --------------------------------------
+
+
+
+# ----------- Initialization -----------
+
+HELP_DESCRIPTION = """
+The handy dotfile templating system.
+"""
+
+HELP_EPILOG = """
+
+----- Environment Variables -----
+
+The following maps each available environment variable with its corresponding CLI argument:
+
+MKDOT_BLOCK_END_STR      :  --block-end-string
+MKDOT_BLOCK_START_STR    :  --block-start-string
+MKDOT_COMMENT_END_STR    :  --comment-end-string
+MKDOT_COMMENT_START_STR  :  --comment-start-string
+MKDOT_EXCLUDE            :  --exclude
+MKDOT_FQDN               :  --fqdn
+MKDOT_LOG_FILE           :  --log-file
+MKDOT_LOG_LVL            :  --log-level
+MKDOT_LOG_MODE           :  --log-mode
+MKDOT_OUTPUT             :  --output
+MKDOT_RSYNC_PATH         :  --rsync-executable
+MKDOT_VAR_END_STR        :  --variable-end-string
+MKDOT_VAR_START_STR      :  --variable-start-string
+MKDOT_WORKING_DIR        :  --working-directory
+
+------------ Examples -----------
+
+$ mkdot example/mkdot.yaml example/templates -o example/out
+    Generates a new set of dotfiles into the "example/out" directory relative
+    to the current working directory.
+
+$ mkdot example/mkdot.yaml example/templates -f /var/log/mkdot.log
+    Generates a new set of dotfiles into the default "~/.config" directory and
+    enables process logging to the specified log file.
+"""
+
+# Color Sequences
+C_BLUE   = '\033[94m'
+C_GREEN  = '\033[92m'
+C_ORANGE = '\033[93m'
+C_RED    = '\033[91m'
+C_END    = '\033[0m'
+C_BOLD   = '\033[1m'
+
+# --------------------------------------
+
+
+
+# ---------- Private Functions ---------
+
+def _c(instring, color=C_BLUE):
+    '''
+    Colorizes the specified string.
+    '''
+    if args.color_output and not color is None:
+        return color + instring + C_END
+    else:
+        return instring
+
+
+def _domain_join(*variables):
+    '''
+    A Jinja function that acts like os.path.join but with domain strings.
+    '''
+    return '.'.join([x.strip('.') for x in variables])
+
+
+def _file_ext(path):
+    '''
+    A Jinja function that returns the file extension of the specified path.
+    '''
+    basename = os.path.basename(path)
+    if not '.' in basename:
+        return ''
+    else:
+        return basename.split('.', 1)[1]
+
+
+def _file_name(path):
+    '''
+    A Jinja function that returns the file name (without the extension) of the
+    specified path.
+    '''
+    basename = os.path.basename(path)
+    if not '.' in basename:
+        return basename
+    else:
+        return basename.split('.', 1)[0]
+
+
+def _get_host(ip):
+    '''
+    A Jinja function that returns the host of a particular IP.
+    '''
+    try:
+        return socket.gethostbyaddr(ip)[0]
+    except Exception as e:
+        raise Exception("get_host('" + ip + "') - Unable to obtain host for specified IP address - " + str(e) + '.')
+
+    
+def _get_ip(host):
+    '''
+    A Jinja function that returns the IP of a particular host.
+    '''
+    try:
+        return socket.gethostbyname(host)
+    except Exception as e:
+        raise Exception("get_ip('" + host + "') - Unable to obtain IP address for specified host - " + str(e) + '.')
+
+    
+def _get_output(cmd):
+    '''
+    A Jinja function that returns the output of the specified command.
+    '''
+    try:
+        return _run_process(cmd, splitlines=False)[1]
+    except Exception as e:
+        raise Exception('Unable to get output from command "' + cmd + '" - ' + str(e) + '.')
+
+
+def _parse_arguments():
+    '''
+    Parses the command-line arguments into a global dictionary called "args".
+    '''
+    # Do some pre-parsing for some of the environment variables to prevent crashes
+    if not os.getenv('MKDOT_LOG_LVL', 'info') in ['info', 'debug']:
+        sys.exit('Invalid value set for environment variable "MKDOT_LOG_LVL".')
+    if not os.getenv('MKDOT_LOG_MODE', 'append') in ['append', 'overwrite']:
+        sys.exit('Invalid value set for environment variable "MKDOT_LOG_MODE".')
+    argparser = argparse.ArgumentParser(
+        description = HELP_DESCRIPTION,
+        epilog = HELP_EPILOG,
+        usage = 'mkdot TEMPLATE_CONF TEMPLATE_SOURCE [-o DEST] [...]',
+        add_help = False,
+        formatter_class = lambda prog: argparse.RawDescriptionHelpFormatter(prog, max_help_position=45, width=100)
+    )
+    # Pre-parse for --revert
+    if not '--revert' in sys.argv:
+        argparser.add_argument(
+            'template_conf',
+            help = 'Specifies the path to the template configuration YAML file. If a directory is supplied, then mkdot will look for a YAML file called "mkdot.yaml" or one with a name closest to the hostname of the executing machine.',
+        )
+        argparser.add_argument(
+            'template_source',
+            help = 'Specifies the source directory of the dotfile templates.',
+        )
+    # Note that the "add_argument" statements for "--block-end-string" and
+    # "--block-start-string" look like the help string claims that the default
+    # has an extra "%", but this is actually required as the argparse module
+    # allows for help-message formatting.
+    argparser.add_argument(
+        '--block-end-string',
+        default = os.getenv('MKDOT_BLOCK_END_STR', '%}'),
+        dest = 'block_end_string',
+        help = 'Specifies the string marking the end of a Jinja template block. Defaults to "%%}".',
+        metavar = 'STR'
+    )
+    argparser.add_argument(
+        '--block-start-string',
+        default = os.getenv('MKDOT_BLOCK_START_STR', '{%'),
+        dest = 'block_start_string',
+        help = 'Specifies the string marking the start of a Jinja template block. Defaults to "{%%".',
+        metavar = 'STR'
+    )
+    argparser.add_argument(
+        '--comment-end-string',
+        default = os.getenv('MKDOT_COMMENT_END_STR', '#}'),
+        dest = 'comment_end_string',
+        help = 'Specifies the string marking the end of a Jinja template comment. Defaults to "#}".',
+        metavar = 'STR'
+    )
+    argparser.add_argument(
+        '--comment-start-string',
+        default = os.getenv('MKDOT_COMMENT_START_STR', '{#'),
+        dest = 'comment_start_string',
+        help = 'Specifies the string marking the start of a Jinja template comment. Defaults to "{#".',
+        metavar = 'STR'
+    )
+    argparser.add_argument(
+        '--delete',
+        action = 'store_true',
+        dest = 'delete',
+        help = 'Specifies that the script should delete any files in the output directory that are not part of the generated configuration. Certain files and subdirectories may be preserved with the "--exclude" option.'
+    )
+    argparser.add_argument(
+        '--dont-trim-blocks',
+        action = 'store_false',
+        dest = 'trim_jinja_blocks',
+        help = 'Specifies that the first newline character after a Jinja block should NOT be removed.'
+    )
+    argparser.add_argument(
+        '-d',
+        '--dry-run',
+        action = 'store_true',
+        dest = 'dry_run',
+        help = 'Specifies that the script should only execute a dry-run, preventing the generated configuration files from being copied from the working directory to the output directory.'
+    )
+    argparser.add_argument(
+        '--exclude',
+        default = os.getenv('MKDOT_EXCLUDE', '').split(' '),
+        dest = 'exclude',
+        help = 'Specifies an additional list of files or directories relative to the specified output directory that should be preserved on write (if "--delete" is supplied).',
+        metavar = 'PATH',
+        nargs = '+'
+    )
+    argparser.add_argument(
+        '--fqdn',
+        default = os.getenv('MKDOT_FQDN', ''),
+        dest = 'fqdn',
+        help = 'Specifies that the given string should be used to set the provided "fqdn" and "hostname" Jinja variables, instead of the FQDN of the executing machine.',
+        metavar = 'HOST'
+    )
+    argparser.add_argument(
+        '-h',
+        '--help',
+        action = 'help',
+        help = 'Displays help and usage information.'
+    )
+    argparser.add_argument(
+        '-f',
+        '--log-file',
+        default = os.getenv('MKDOT_LOG_FILE', ''),
+        dest = 'log_file',
+        help = 'Specifies a log file to write to in addition to stdout/stderr.',
+        metavar = 'FILE'
+    )
+    argparser.add_argument(
+        '-l',
+        '--log-level',
+        choices = ['info', 'debug'],
+        default = os.getenv('MKDOT_LOG_LVL', 'info'),
+        dest = 'log_level',
+        help = 'Specifies the log level of the script, being either "info" or "debug". Defaults to "info". This option is ignored if "--log-file" is not specified.',
+        metavar = 'LVL'
+    )
+    argparser.add_argument(
+        '-m',
+        '--log-mode',
+        choices = ['append', 'overwrite'],
+        default = os.getenv('MKDOT_LOG_MODE', 'append'),
+        dest = 'log_mode',
+        help = 'Specifies whether to "append" or "overwrite" the specified log file. Defaults to "append". This option is ignored if "--log-file" is not specified.',
+        metavar = 'MODE'
+    )
+    argparser.add_argument(
+        '--no-backup',
+        action = 'store_false',
+        dest = 'do_backup',
+        help = 'Specifies that the script should not perform a backup of the specified output directory prior to writing the generated configuration files.'
+    )
+    argparser.add_argument(
+        '--no-color',
+        action = 'store_false',
+        dest = 'color_output',
+        help = 'Disables color output to stdout/stderr.'
+    )
+    argparser.add_argument(
+        '-o',
+        '--output',
+        default = os.path.expanduser(os.getenv('MKDOT_OUTPUT', '~/.config')),
+        dest = 'output',
+        help = 'Specifies the output directory of the generated dotfiles. Defaults to "~/.config".',
+        metavar = 'DIR'
+    )
+    argparser.add_argument(
+        '--revert',
+        const = 'DEFAULT',
+        default = '',
+        dest = 'revert',
+        help = 'Restores the contents of an existing backup directory relative to the specified output directory. If a path is provided alongside this flag, that location will instead be utilized as the restoration source.',
+        metavar = 'DIR',
+        nargs = '?'
+    )
+    argparser.add_argument(
+        '--rsync-executable',
+        default = os.getenv('MKDOT_RSYNC_PATH', '/usr/bin/rsync'),
+        dest = 'rsync_executable',
+        help = 'Specifies a file path to the rsync executable utilized for transferring directories. Defaults to "/usr/bin/rsync".',
+        metavar = 'FILE'
+    )
+    argparser.add_argument(
+        '-r',
+        '--run',
+        default = os.getenv('MKDOT_RUN', ''),
+        dest = 'run',
+        help = 'Specifies a command to run after the newly generated dotfiles are written to the output directory. This command is not run if "--dry-run" is specified.',
+        metavar = 'CMD'
+    )
+    argparser.add_argument(
+        '--variable-end-string',
+        default = os.getenv('MKDOT_VAR_END_STR', '}}'),
+        dest = 'variable_end_string',
+        help = 'Specifies the string marking the end of a Jinja template variable. Defaults to "}}".',
+        metavar = 'STR'
+    )
+    argparser.add_argument(
+        '--variable-start-string',
+        default = os.getenv('MKDOT_VAR_START_STR', '{{'),
+        dest = 'variable_start_string',
+        help = 'Specifies the string marking the start of a Jinja template variable. Defaults to "{{".',
+        metavar = 'STR'
+    )
+    argparser.add_argument(
+        '-w',
+        '--working-directory',
+        default = os.getenv('MKDOT_WORKING_DIR', '/tmp/mkdot'),
+        dest = 'working_directory',
+        help = 'Specifies the working directory. Defaults to "/tmp/mkdot".',
+        metavar = 'DIR'
+    )
+    global args
+    args = argparser.parse_args()
+
+    
+def _raise(message):
+    '''
+    A mkdot-provided Jinja function that raises an exception with the supplied
+    message.
+    '''
+    raise Exception(message)
+
+
+def _rsync(src, dst, rsync_args=''):
+    '''
+    Performs an rsync from the specified source path to the specified
+    destination path.
+    '''
+    if args.dry_run:
+        true_rsync_args = rsync_args + ' --dry-run'
+    else:
+        true_rsync_args = rsync_args
+    cmd = '{rsync_exec} {args} {src} {dst}'.format(
+        rsync_exec = args.rsync_executable,
+        args = true_rsync_args,
+        src = src,
+        dst = dst
+    )
+    return _run_process(cmd)
+
+
+def _run_process(cmd, splitlines=True):
+    '''
+    Runs the specified command as a subprocess, returning the output of the
+    command (optionally not split by lines) and its exit code.
+    '''
+    process = subprocess.Popen(
+        cmd,
+        stdout = subprocess.PIPE,
+        stderr = subprocess.STDOUT,
+        shell = True
+    )
+    output = process.communicate()[0]
+    exit_code = process.returncode
+    if splitlines:
+        return (output.splitlines(), exit_code)
+    else:
+        return (output, exit_code)
+
+
+def _setup_logging():
+    '''
+    Sets-up logging.
+    '''
+    if args.log_file:
+        try:
+            if args.log_mode == 'append':
+                logging_fmode = 'a'
+            else:
+                logging_fmode = 'w'
+            if args.log_level == 'info':
+                logging_level = logging.INFO
+            else:
+                logging_level = logging.DEBUG
+            logging.basicConfig(
+                filename = args.log_file,
+                filemode = logging_fmode,
+                level    = logging_level,
+                format   = '[%(levelname)s] [%(asctime)s] [%(process)d] [%(module)s.%(funcName)s] %(message)s',
+                datefmt  = '%m/%d/%Y %I:%M:%S %p'
+            )
+            logging.addLevelName(logging.CRITICAL, 'CRI')
+            logging.addLevelName(logging.ERROR, 'ERR')
+            logging.addLevelName(logging.WARNING, 'WAR')
+            logging.addLevelName(logging.INFO, 'INF')
+            logging.addLevelName(logging.DEBUG, 'DEB')
+        except Exception as e:
+            sys.exit('Unable to initialize logging system - ' + str(e) + '.')
+    else:
+        logger = logging.getLogger()
+        logger.disabled = True
+
+
+def _step(instring, color=C_BLUE):
+    '''
+    Formats the specified string as a "step".
+    '''
+    return _c('::', color) + ' ' + _c(instring, C_BOLD)
+
+
+def _substep(instring, color=C_BLUE):
+    '''
+    Formats the specified string as a "sub-step".
+    '''
+    return '  ' + _c('-->', color) + ' ' + instring
+
+
+def _subsubstep(instring, color=None):
+    '''
+    Formats the specified string as a "sub-sub-step".
+    '''
+    return '      ' + _c(instring, color)
+
+
+# --------------------------------------
+
+
+
+# ---------- Public Functions ----------
+
+def get_hostname():
+    '''
+    Obtains the hostname of the machine.
+    '''
+    logging.debug('Getting hostname and FQDN...')
+    try:
+        global hostname
+        hostname = socket.gethostname().split('.', 1)[0]
+        global fqdn
+        fqdn = socket.getfqdn()
+    except Exception as e:
+        logging.critical('Unable to discern hostname - ' + str(e) + '.')
+        sys.exit(1)
+    logging.debug('Hostname: ' + hostname)
+    logging.debug('FQDN: ' + fqdn)
+
+
+def handle_revert():
+    '''
+    Handles --revert.
+    '''
+    print(_step('Reverting changes...'))
+    logging.info('Reverting changes...')
+    if args.revert == 'DEFAULT':
+        print(_substep('Restoring dotfiles from dedicated backup...'))
+        logging.debug('Restoring dotfiles from dedicated backup...')
+        backup_dir = args.output + '.backup'
+    else:
+        print(_substep('Restoring dotfiles from specified directory...'))
+        logging.debug('Restoring dotfiles from specified directory...')
+        backup_dir = args.revert
+    if not os.path.isdir(backup_dir):
+        if args.revert == 'DEFAULT':
+            printe(_subsubstep('Unable to restore dotfiles - dedicated backup directory does not exist.', C_RED))
+            logging.critical('Unable to restore dotfiles - dedicated backup directory does not exist.')
+        else:
+            printe(_subsubstep('Unable to restore dotfiles - specified source directory does not exist.', C_RED))
+            logging.critical('Unable to restore dotfiles - specified source directory does not exist.')
+        sys.exit(7)
+    if not os.path.isdir(args.output):
+        try:
+            os.makedirs(args.output)
+        except Exception as e:
+            printe(_subsubstep('Unable to restore dotfiles - unable to create output directory - ' + str(e) + '.', C_RED))
+            logging.critical('Unable to restore dotfiles - unable to create output directory - ' + str(e) + '.')
+            sys.exit(7)
+    try:
+        (revert_out, revert_ec) = _rsync(
+            src = backup_dir.rstrip('/') + '/',
+            dst = args.output.rstrip('/') + '/',
+            rsync_args = '-a --delete --progress'
+        )
+    except Exception as e:
+        printe(_subsubstep('Unable to restore dotfiles - ' + str(e) + '.', C_RED))
+        logging.critical('Unable to restore dotfiles - ' + str(e) + '.')
+        sys.exit(7)
+    logging.debug('REVERT EXIT CODE: ' + str(revert_ec))
+    if revert_ec != 0:
+        if revert_out:
+            for l in revert_out:
+                logging.critical('REVERT OUTPUT: ' + l)
+        printe(_subsubstep('Unable to restore dotfiles - subprocess returned non-zero exit code.', C_RED))
+        logging.critical('Unable to restore dotfiles - subprocess returned non-zero exit code.')
+        sys.exit(7)
+    else:
+        if revert_out:
+            for l in revert_out:
+                logging.debug('REVERT OUTPUT: ' + l)
+
+                
+def main():
+    '''
+    The entrypoint of the script.
+    '''
+    # Parse command-line arguments
+    _parse_arguments()
+    
+    # Setup logging
+    _setup_logging()
+
+    # Log CLI arguments at the DEBUG level
+    logging.debug('----- CLI Arguments -----')
+    dargs = vars(args)
+    for a in dargs:
+        logging.debug(a + ' : ' + str(dargs[a]))
+    logging.debug('-------------------------')
+
+    # Get the hostname of the machine
+    get_hostname()
+
+    # Handle --revert if it is specified
+    if args.revert:
+        logging.info('Started revert process.')
+        handle_revert()
+        logging.info('Revert process complete.')
+    else:
+        logging.info('Started configuration process.')
+        # Set-up and validate the environment
+        validate_environment()
+        # Parse template configuration file
+        parse_yaml_config()
+        # Set-up the jinja environment
+        setup_jinja()
+        # Translate templates (saving into the working directory)
+        translate_templates()
+        # Write to the output directory
+        write_output()
+        logging.info('Configuration process complete.')
+
+    # We are done.
+    sys.exit(0)
+
+
+def parse_yaml_config():
+    '''
+    Parses the template configuration YAML file into a global dictionary object.
+    '''
+    print(_step('Loading template configuration file...'))
+    logging.info('Loading template configuration file...')
+    print(_substep('Reading template configuration file...'))
+    logging.debug('Reading template configuration file...')
+    try:
+        with open(args.template_conf, 'r') as yamlf:
+            template_conf_raw = yamlf.read()
+    except Exception as e:
+        printe(_subsubstep('Unable to read template configuration file - ' + str(e) + '.', C_RED))
+        logging.critical('Unable to read template configuration file - ' + str(e) + '.')
+        sys.exit(3)
+    print(_substep('Parsing template configuration file...'))
+    logging.debug('Parsing template configuration file...')
+    try:
+        global template_conf
+        template_conf = yaml.load(template_conf_raw)
+    except Exception as e:
+        printe(_subsubstep('Unable to parse template configuration file - ' + str(e) + '.', C_RED))
+        logging.critical('Unable to parse template configuration file - ' + str(e) + '.')
+        sys.exit(3)
+    logging.debug('----- Template Configuration -----')
+    for x in template_conf:
+        logging.debug(x + ' : ' + str(template_conf[x]))
+    logging.debug('----------------------------------')
+    print(_substep('Validating template configuration...'))
+    logging.debug('Validating template configuration...')
+    if not 'templates' in template_conf:
+        printe(_subsubstep('Invalid template configuration - "templates" specification not found.', C_RED))
+        logging.critical('Invalid template configuration - "templates" specification not found.')
+        sys.exit(3)
+    if not isinstance(template_conf['templates'], list):
+        printe(_subsubstep('Invalid template configuration - "templates" specification is not a list of dictionaries.', C_RED))
+        logging.critical('Invalid template configuration - "templates" specification is not a list of dictionaries.')
+        sys.exit(3)
+    # Pull out the templates into a dictionary of output-input mappings.
+    logging.debug('Extracting template file paths...')
+    global template_paths
+    template_paths = {}
+    # template_paths[OUTPUT (RELATIVE)] = INPUT (RELATIVE)
+    for spec in template_conf['templates']:
+        if not 'file' in spec:
+            printe(_subsubstep('Invalid template configuration - missing "file" key in source templates specification.', C_RED))
+            logging.critical('Invalid template configuration - missing "file" key in source templates specification.')
+            sys.exit(3)
+        file_spec = os.path.join(args.template_source, spec['file'])
+        if '*' in spec['file']:
+            if 'template' in spec:
+                printe(_subsubstep('Invalid template configuration - found "template" key in source templates specification alongside wildcard "file" key.', C_RED))
+                logging.critical('Invalid template configuration - found "template" key in source templates specification alongside wildcard "file" key.')
+                sys.exit(3)
+            g = glob.glob(file_spec)
+            if not g:
+                printe(_subsubstep('Warning: No files found matching glob "' + file_spec + '".', C_ORANGE))
+                logging.warning('No files found matching glob "' + file_spec + '".')
+            else:
+                for x in g:
+                    template_paths[os.path.relpath(x, args.template_source)] = os.path.relpath(x, args.template_source)
+        else:
+            if 'template' in spec:
+                template_paths[spec['file']] = spec['template']
+            else:
+                template_paths[spec['file']] = spec['file']
+    logging.debug('TEMPLATE FILE MAPPINGS: ' + str(template_paths))
+    for f in template_paths:
+        if not os.path.isfile(os.path.join(args.template_source, template_paths[f])):
+            printe(_subsubstep('Invalid template configuration - specified source template "' + template_paths[f] + '" does not exist.', C_RED))
+            logging.critical('Invalid template configuration - specified source template "' + template_paths[f] + '" does not exist.')
+            sys.exit(3)
+
+    
+def print_jinja(message):
+    '''
+    A mkdot-provided Jinja function that prints and logs the specified message.
+    '''
+    print(_subsubstep(message, C_BLUE))
+    logging.info(message)
+    return ''
+
+    
+def printe(instring):
+    '''
+    Prints the specified string to stderr.
+    '''
+    sys.stderr.write(instring + '\n')
+
+
+@jinja2.contextfunction
+def require(context, *variables):
+    '''
+    A Jinja filter which specifies that the specified variables are required.
+ 
+    See:
+    http://jinja.pocoo.org/docs/2.10/api/#the-context
+    http://jinja.pocoo.org/docs/2.10/api/#jinja2.contextfilter
+    '''
+    for variable in variables:
+        if '.' in variable:
+            splitvar = variable.split('.', 1)
+            if not splitvar[0] in context:
+                raise Exception('Required variable "' + splitvar[0] + '" not found in within the context of "' + context.name + '".')
+            if not splitvar[1] in context[splitvar[0]]:
+                raise Exception('Required variable "' + variable + '" not found in within the context of "' + context.name + '".')
+        else:
+            if not variable in context:
+                raise Exception('Required variable "' + variable + '" not found in within the context of "' + context.name + '".')
+    return ''
+
+
+def setup_jinja():
+    '''
+    Sets-up the Jinja environment for template parsing.
+    '''
+    print(_step('Setting-up templating environment...'))
+    logging.info('Setting-up templating environment...')
+    print(_substep('Initializing loader...'))
+    logging.debug('Initializing loader...')
+    try:
+        fsloader = jinja2.FileSystemLoader(args.template_source)
+    except Exception as e:
+        printe(_subsubstep('Unable to initialize templating loader - ' + str(e) + '.', C_RED))
+        logging.critical('Unable to initialize templating loader - ' + str(e) + '.')
+        sys.exit(4)
+    print(_substep('Initializing environment...'))
+    logging.debug('Initializing environment...')
+    try:
+        global jinja_env
+        jinja_env = jinja2.Environment(
+            block_end_string      = args.block_end_string,
+            block_start_string    = args.block_start_string,
+            comment_end_string    = args.comment_end_string,
+            comment_start_string  = args.comment_start_string,
+            loader                = fsloader,
+            trim_blocks           = args.trim_jinja_blocks,
+            variable_end_string   = args.variable_end_string,
+            variable_start_string = args.variable_start_string
+        )
+    except Exception as e:
+        printe(_subsubstep('Unable to initialize templating environment - ' + str(e) + '.', C_RED))
+        logging.critical('Unable to initialize templating environment - ' + str(e) + '.')
+        sys.exit(4)
+    print(_substep('Initializing extensions...'))
+    logging.debug('Initializing extensions...')
+    try:
+        # Provided variables
+        if args.fqdn:
+            jinja_env.globals['fqdn']           = args.fqdn
+            jinja_env.globals['hostname']       = args.fqdn.split('.', 1)
+        else:
+            jinja_env.globals['fqdn']           = fqdn
+            jinja_env.globals['hostname']       = hostname
+        jinja_env.globals['network_interfaces'] = network_interfaces
+
+        # Custom functions
+        jinja_env.globals['domain_join']   = _domain_join
+        jinja_env.globals['file_ext']      = _file_ext
+        jinja_env.globals['file_name']     = _file_name
+        jinja_env.globals['get_host']      = _get_host
+        jinja_env.globals['get_ip']        = _get_ip
+        jinja_env.globals['get_output']    = _get_output
+        jinja_env.globals['path_basename'] = os.path.basename
+        jinja_env.globals['path_dirname']  = os.path.dirname
+        jinja_env.globals['path_join']     = os.path.join
+        jinja_env.globals['print']         = print_jinja
+        jinja_env.globals['raise']         = _raise
+        jinja_env.globals['require']       = require
+    except Exception as e:
+        printe(_subsubstep('Unable to initialize templating extensions - ' + str(e) + '.', C_RED))
+        logging.critical('Unable to initialize templating extensions - ' + str(e) + '.')
+        sys.exit(4)
+
+
+def translate_templates():
+    '''
+    Translates the source templates into their final forms within the working
+    directory.
+    '''
+    print(_step('Translating templates...'))
+    logging.info('Translating templates...')
+    global working_paths
+    working_paths = []
+    for output_path in template_paths:
+        rel_path = template_paths[output_path]
+        filename = os.path.basename(template_paths[output_path])
+        print(_substep(output_path))
+        logging.info('Translating "' + os.path.join(args.template_source, rel_path) + '" into "' + os.path.join(args.working_directory, output_path) + '"...')
+        logging.debug('Loading template...')
+        try:
+            template = jinja_env.get_template(rel_path)
+        except Exception as e:
+            printe(_subsubstep('Unable to load template - ' + str(e), C_RED))
+            logging.critical('Unable to load template - ' + str(e))
+            sys.exit(5)
+        try:
+            try:
+                this = next(t for t in template_conf['templates'] if ('template' in t and t['template'] == filename) and t['file'] == os.path.basename(output_path))
+            except StopIteration as e:
+                this = next(t for t in template_conf['templates'] if t['file'] == filename)
+            modified_conf = template_conf.copy()
+            modified_conf['this'] = this
+            modified_conf['file'] = filename
+            rendered_template = template.render(**modified_conf)
+        except jinja2.TemplateSyntaxError as e:
+            printe(_subsubstep('Unable to render template - template syntax error on line ' + str(e.lineno) + ' - ' + str(e), C_RED))
+            logging.critical('Unable to render template - template syntax error on line ' + str(e.lineno) + ' - ' + str(e))
+            sys.exit(5)
+        except Exception as e:
+            printe(_subsubstep('Unable to render template - ' + str(e), C_RED))
+            logging.critical('Unable to render template - ' + str(e))
+            sys.exit(5)
+        logging.debug('Writing rendered configuration file to working directory...')
+        working_path = os.path.join(args.working_directory, output_path)
+        working_paths.append(working_path)
+        if not os.path.isdir(os.path.dirname(working_path)):
+            try:
+                os.makedirs(os.path.dirname(working_path))
+            except Exception as e:
+                printe(_subsubstep('Unable to write rendered file to working directory - Unable to create parent directory - ' + str(e), C_RED))
+                logging.critical('Unable to write rendered file to working directory - Unable to create parent directory - ' + str(e))
+                sys.exit(5)
+        try:
+            with open(working_path, 'w') as f:
+                f.write(rendered_template)
+        except Exception as e:
+            printe(_subsubstep('Unable to write rendered file to working directory - ' + str(e), C_RED))
+            logging.critical('Unable to write rendered file to working directory - ' + str(e))
+            sys.exit(5)
+
+
+def validate_environment():
+    '''
+    Validates that the executing environment is sufficient to proceed.
+    '''
+    print(_step('Validating working environment...'))
+    logging.info('Validating working environment...')
+    print(_substep('Validating rsync executable path...'))
+    logging.debug('Validating rsync executable path...')
+    if not os.path.isfile(args.rsync_executable):
+        printe(_subsubstep('Specified rsync executable path does not exist.', C_RED))
+        logging.critical('Specified rsync executable path does not exist.')
+        sys.exit(2)
+    print(_substep('Validating template source directory...'))
+    logging.debug('Validating template source directory...')
+    if not os.path.isdir(args.template_source):
+        printe(_subsubstep('Specified template source directory does not exist.', C_RED))
+        logging.critical('Specified template source directory does not exist.')
+        sys.exit(2)
+    print(_substep('Validating template configuration file...'))
+    logging.debug('Validating template configuration file...')
+    if not os.path.isfile(args.template_conf):
+        if not os.path.isdir(args.template_conf):
+            printe(_subsubstep('Specified template configuration path does not exist.', C_RED))
+            logging.critical('Specified template configuration path does not exist.')
+            sys.exit(2)
+        else:
+            logging.debug('Selecting suitable template configuration file within specified directory...')
+            files = [x for x in os.listdir(args.template_conf) if os.path.isfile(os.path.join(args.template_conf, x))]
+            if not files:
+                printe(_subsubstep('Specified template configuration file directory does not contain any template configuration files.', C_RED))
+                logging.critical('Specified template configuration file directory does not contain any template configuration files.')
+                sys.exit(2)
+            elif 'mkdot.yaml' in files:
+                args.template_conf = os.path.join(args.template_conf, 'mkdot.yaml')
+            elif hostname + '.yaml' in files:
+                args.template_conf = os.path.join(args.template_conf, hostname + '.yaml')
+            else:
+                found_match = False
+                for f in files:
+                    if f.rsplit('.', 1)[0] in hostname:
+                        args.template_conf = os.path.join(args.template_conf, f)
+                        found_match = True
+                        break
+                if not found_match:
+                    printe(_subsubstep('Specified template configuration file directory does not contain any selectable template configuration files.', C_RED))
+                    logging.critical('Specified template configuration file directory does not contain any selectable template configuration files.')
+                    sys.exit(2)
+            printe(_subsubstep('Automatically selected template configuration file "' + args.template_conf + '".', C_BLUE))
+            logging.info('Automatically selected template configuration file "' + args.template_conf + '".')
+    print(_substep('Validating working directory...'))
+    logging.debug('Validating working directory...')
+    if os.path.isfile(args.working_directory):
+        printe(_subsubstep('Specified working directory is an existing file.', C_RED))
+        logging.critical('Specified working directory is an existing file.')
+        sys.exit(2)
+    if os.path.isdir(args.working_directory):
+        logging.debug('Working directory already exists. Deleting previous working directory...')
+        try:
+            shutil.rmtree(args.working_directory)
+        except Exception as e:
+            printe(_subsubstep('Unable to delete previous working directory - ' + str(e) + '.', C_RED))
+            logging.critical('Unable to delete previous working directory - ' + str(e) + '.')
+            sys.exit(2)
+    logging.debug('Creating working directory...')
+    try:
+        os.makedirs(args.working_directory)
+    except Exception as e:
+        printe(_subsubstep('Unable to create working directory - ' + str(e) + '.', C_RED))
+        logging.critical('Unable to create working directory - ' + str(e) + '.')
+        sys.exit(2)
+
+
+def write_output():
+    '''
+    Transfers the newly generated configuration files from the working directory
+    to the specified output directory.
+    '''
+    if args.dry_run:
+        print(_step('Finalizing configuration process (DRY RUN)...'))
+        logging.info('Finalizing configuration process (DRY RUN)...')
+    else:
+        print(_step('Finalizing configuration process...'))
+        logging.info('Finalizing configuration process...')
+    logging.debug('Looking for existing output directory...')
+    if os.path.isdir(args.output):
+        if args.do_backup:
+            logging.debug('Output directory already exists. Checking for previous backup directories...')
+            if not os.path.isdir(args.output.rstrip('/') + '.backup'):
+                logging.debug('Creating backup directory...')
+                try:
+                    os.makedirs(args.output.rstrip('/') + '.backup')
+                except Exception as e:
+                    printe(_subsubstep('Unable to create backup directory - ' + str(e) + '.', C_RED))
+                    logging.critical('Unable to create backup directory - ' + str(e) + '.')
+                    sys.exit(6)
+            print(_substep('Creating backup of existing dotfiles...'))
+            logging.info('Creating backup of existing dotfiles...')
+            try:
+                (b_o, b_ec) = _rsync(
+                    args.output.rstrip('/') + '/',
+                    args.output.rstrip('/') + '.backup/',
+                    '-a -h --delete --progress'
+                )
+            except Exception as e:
+                printe(_subsubstep('Unable to create backup - ' + str(e) + '.', C_RED))
+                logging.critical('Unable to create backup - ' + str(e) + '.')
+                sys.exit(6)
+            logging.debug('BACKUP RSYNC EXIT CODE: ' + str(b_ec))
+            if b_ec != 0:
+                if b_o:
+                    for l in b_o:
+                        logging.critical('BACKUP RSYNC OUTPUT: ' + l)
+                printe(_subsubstep('Unable to create backup - subprocess returned non-zero exit code.', C_RED))
+                logging.critical('Unable to create backup - subprocess returned non-zero exit code.')
+                sys.exit(6)
+            else:
+                if b_o:
+                    for l in b_o:
+                        logging.debug('BACKUP RSYNC OUTPUT: ' + l)
+        else:
+            logging.debug('Output directory exists but backups are disabled.')
+    else:
+        logging.debug('Output directory doesn\'t exist. Creating output directory...')
+        try:
+            os.makedirs(args.output)
+        except Exception as e:
+            printe(_subsubstep('Unable to create output directory - ' + str(e) + '.', C_RED))
+            logging.critical('Unable to create output directory - ' + str(e) + '.')
+            sys.exit(6)
+    print(_substep('Writing dotfiles to output directory...'))
+    logging.info('Writing dotfiles to output directory...')
+    rsync_args = '-a -h --progress'
+    if args.delete: rsync_args += ' --delete'
+    if args.exclude and args.exclude[0]:
+        for x in args.exclude:
+            rsync_args += ' --exclude ' + x
+    logging.debug('OUTPUT RSYNC ARGS: ' + rsync_args)
+    try:
+        (w_o, w_ec) = _rsync(
+            args.working_directory.rstrip('/') + '/',
+            args.output.rstrip('/') + '/',
+            rsync_args
+        )
+    except Exception as e:
+        printe(_subsubstep('Unable to write dotfiles to output directory - ' + str(e) + '.', C_RED))
+        logging.critical('Unable to write dotfiles to output directory - ' + str(e) + '.')
+        sys.exit(6)
+    logging.debug('OUTPUT RSYNC EXIT CODE: ' + str(w_ec))
+    if w_ec != 0:
+        if w_o:
+            for l in w_o:
+                logging.critical('OUTPUT RSYNC OUTPUT: ' + l)
+        printe(_subsubstep('Unable to write dotfiles to output directory - subprocess returned non-zero exit code.', C_RED))
+        logging.critical('Unable to write dotfiles to output directory - subprocess returned non-zero exit code.')
+        sys.exit(6)
+    else:
+        if w_o:
+            for l in w_o:
+                logging.debug('OUTPUT RSYNC OUTPUT: ' + l)
+    if args.run:
+        print(_substep(args.run))
+        logging.info('Executing "' + args.run + '"...')
+        if not args.dry_run:
+            try:
+                (r_o, r_ec) = _run_process(args.run)
+            except Exception as e:
+                printe(_subsubstep('Unable to run command - ' + str(e) + '.', C_RED))
+                logging.critical('Unable to run command - ' + str(e) + '.')
+                sys.exit(6)
+            logging.debug('COMMAND EXIT CODE: ' + str(w_ec))
+            if w_ec != 0:
+                if w_o:
+                    for l in w_o:
+                        logging.critical('COMMAND OUTPUT: ' + l)
+                printe(_subsubstep('Warning: Command returned non-zero exit code.', C_ORANGE))
+                logging.warning('Command returned non-zero exit code.')
+                sys.exit(6)
+            else:
+                if w_o:
+                    for l in w_o:
+                        logging.debug('COMMAND OUTPUT: ' + l)
+            
+
+# --------------------------------------
+
+
+
+# ---------- Boilerplate Magic ---------
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError) as ki:
+        sys.stderr.write('Recieved keyboard interrupt!\n')
+        sys.exit(100)
+
+# --------------------------------------
