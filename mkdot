@@ -78,6 +78,9 @@ C_RED    = '\033[91m'
 C_END    = '\033[0m'
 C_BOLD   = '\033[1m'
 
+# Regular Expressions
+xrandr_regex = re.compile(r'^(?P<name>\S+)\s+(?P<is_connected>connected|disconnected)\s+(?P<is_primary>(?:primary)?)\s*(?:(?P<res_x>\d+)x(?P<res_y>\d+)\+(?P<loc_x>\d+)\+(?P<loc_y>\d+))?')
+
 # --------------------------------------
 
 
@@ -453,6 +456,64 @@ def _subsubstep(instring, color=None):
 
 # ---------- Public Functions ----------
 
+
+def get_displays():
+    '''
+    Obtains the list of available displays via "xrandr".
+    '''
+    logging.debug('Getting displays...')
+    global displays
+    displays = []
+    global connected_displays
+    connected_displays = []
+    global primary_display
+    primary_display = {}
+    try:
+        (xrandr_out, xrandr_ec) = _run_process(
+            'xrandr -q | grep connected'
+        )
+    except Exception as e:
+        printe(_c('Warning: Unable to get display information - ' + str(e) + '.', C_ORANGE))
+        logging.warning('Unable to get display information - ' + str(e) + '.')
+        return
+    logging.debug('XRANDR EXIT CODE: ' + str(xrandr_ec))
+    if xrandr_ec != 0:
+        if xrandr_out:
+            for l in xrandr_out:
+                logging.warning('XRANDR OUTPUT: ' + l)
+        printe(_c('Warning: Unable to get display information - xrandr subprocess returned non-zero exit code.', C_ORANGE))
+        logging.warning('Unable to get display information - xrandr subprocess returned non-zero exit code.')
+        return
+    elif xrandr_out:
+        for l in xrandr_out:
+            logging.debug('XRANDR OUTPUT: ' + l)
+            xrandr_match = xrandr_regex.match(l)
+            if not xrandr_match:
+                printe(_c('Warning: Unable to get some display information - xrandr subprocess returned some unparsable output.', C_ORANGE))
+                logging.warning('Unable to get some display information - xrandr subprocess returned some unparsable output.')
+            else:
+                gdict = xrandr_match.groupdict('')
+                display_entry = {
+                    "name": gdict['name'],
+                    "is_connected": gdict['is_connected'] == 'connected',
+                    "is_primary": gdict['is_primary'] == 'primary',
+                    "res_x": int(gdict['res_x']) if gdict['res_x'] else None,
+                    "res_y": int(gdict['res_y']) if gdict['res_y'] else None,
+                    "loc_x": int(gdict['loc_x']) if gdict['loc_x'] else None,
+                    "loc_y": int(gdict['loc_y']) if gdict['loc_y'] else None
+                }
+                displays.append(display_entry)
+                if display_entry['is_connected']: connected_displays.append(display_entry)
+                if display_entry['is_primary']: primary_display = display_entry
+        logging.debug('DISPLAYS: ' + str(displays))
+        logging.debug('CONNECTED DISPLAYS: ' + str(connected_displays))
+        logging.debug('PRIMARY DISPLAY: ' + str(primary_display))
+    else:
+        printe(_c('Warning: Unable to get display information - xrandr subprocess returned no output.', C_ORANGE))
+        logging.warning('Unable to get display information - xrandr subprocess returned no output.')
+        return
+
+
 def get_hostname():
     '''
     Obtains the hostname of the machine.
@@ -542,6 +603,9 @@ def main():
 
     # Get the hostname of the machine
     get_hostname()
+
+    # Get the displays
+    get_displays()
 
     # Handle --revert if it is specified
     if args.revert:
@@ -714,6 +778,9 @@ def setup_jinja():
     logging.debug('Initializing extensions...')
     try:
         # Provided variables
+        jinja_env.globals['connected_displays'] = connected_displays
+        jinja_env.globals['displays']           = displays
+        jinja_env.globals['primary_display']    = primary_display
         if args.fqdn:
             jinja_env.globals['fqdn']           = args.fqdn
             jinja_env.globals['hostname']       = args.fqdn.split('.', 1)

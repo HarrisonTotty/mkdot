@@ -7,13 +7,30 @@
 
 ### Provided Variables
 
-| Variable   | Description                                                     |
-|------------|-----------------------------------------------------------------|
-| `file`     | The name of the current template _output file_.                 |
-| `fqdn`     | The fully-qualified domain name of the machine running `mkdot`. |
-| `hostname` | The hostname of the machine running `mkdot`.                    |
+| Variable             | Description                                                            |
+|----------------------|------------------------------------------------------------------------|
+| `connected_displays` | The items within `displays` which have `is_connected` equal to `True`. |
+| `displays`           | A list of display data provided by `xrandr` (see below).               |
+| `file`               | The name of the current template _output file_.                        |
+| `fqdn`               | The fully-qualified domain name of the machine running `mkdot`.        |
+| `hostname`           | The hostname of the machine running `mkdot`.                           |
+| `primary_display`    | The item within `displays` corresponding to the primary display.       |
 
 For all templates, the `this` variable is set to the relevant `templates` list item (see _Template Configuration File_). As a side note, since `this.file` has the same value as `file`, it's probably shorter to just use `file` everywhere.
+
+#### `displays`
+
+The value of this variable is a list of dictionaries corresponding to the available displays, where each item contains the following key-value pairs:
+
+| Key            | Description                                           | Example Value |
+|----------------|-------------------------------------------------------|---------------|
+| `name`         | The name of this display.                             | `eDP1`        |
+| `is_connected` | Whether this display is connected.                    | `True`        |
+| `is_primary`   | Whether this is considered the primary display.       | `True`        |
+| `res_x`        | The current resolution of this display in the x-axis. | `1600`        |
+| `res_y`        | The current resolution of this display in the y-axis. | `900`         |
+| `loc_x`        | The location (offset) of this display in the x-axis.  | `1680`        |
+| `loc_y`        | The location (offset) of this display in the y-axis.  | `150`         |
 
 ### Provided Functions
 
