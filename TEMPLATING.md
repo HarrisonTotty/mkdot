@@ -58,7 +58,7 @@ The template configuration file (`example/mkdot.yaml`) is a YAML file which cont
 
 ### `templates` Variable
 
-The `templates` variable defines a list of dictionaries specifying the input-output mapping of template files to render. The name of each output file is specified by the required `file` key. By default, the `file` key assumes that the input file path (relative to the template source directory) is the same as the output file path (relative to the output directory). However, if the optional sibling `template` key is specified, then the input file is taken to be the value of the `template` key, and the output file is taken to be the value of the `file` key. Note that the value of the `file` and `this.file` Jinja variables will always be the value of the `file` key in the `templates` specification. Basic globbing for the value of the `file` key is supported by Python's `glob` module, however globbing is not supported if a specification supplies values to both the `file` and `template` keys. An example `templates` specification is given below:
+The `templates` variable defines a list of dictionaries specifying the input-output mapping of template files to render. The name of each output file is specified by the required `file` key. By default, the `file` key assumes that the input file path (relative to the template source directory) is the same as the output file path (relative to the output directory). However, if the optional sibling `template` key is specified, then the input file is taken to be the value of the `template` key, and the output file is taken to be the value of the `file` key. Note that the value of the `file` and `this.file` Jinja variables will always be the value of the `file` key in the `templates` specification. Basic globbing for the value of the `file` key is supported by Python's `glob` module, however globbing is not supported if a specification supplies values to both the `file` and `template` keys. In addition to the `file` and `template` keys, a simlink may be created (after the translation process completes) by specifying the link destination via the `link` key. Note that value of the `link` key may be an absolute path, a path relative to the specified output directory, or a path relative to the executing user's home directory (by prefixing with `~/`). An example `templates` specification is given below:
 
 ```
 templates:
@@ -70,7 +70,12 @@ templates:
     # template directory.
     - file: "bash/*.sh"
     
-    # Import foo/baz.template and save it as foo/bar.conf
+    # Import "foo/baz.template" and save it as "foo/bar.conf".
     - file: "foo/bar.conf"
       template: "foo/baz.template"
+      
+    # Import "A.template", save it as "B.conf", and create a symlink to "~/C.conf".
+    - file: "B.conf"
+      template: "A.template"
+      link: "~/C.conf"
 ```

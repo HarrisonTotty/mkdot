@@ -668,11 +668,13 @@ def parse_yaml_config():
         printe(_subsubstep('Invalid template configuration - "templates" specification is not a list of dictionaries.', C_RED))
         logging.critical('Invalid template configuration - "templates" specification is not a list of dictionaries.')
         sys.exit(3)
-    # Pull out the templates into a dictionary of output-input mappings.
-    logging.debug('Extracting template file paths...')
+    logging.debug('Extracting template file paths and symlinks...')
     global template_paths
     template_paths = {}
     # template_paths[OUTPUT (RELATIVE)] = INPUT (RELATIVE)
+    global symlinks
+    symlinks = {}
+    # symlinks[OUTPUT (RELATIVE)] = INPUT (RELATIVE)
     for spec in template_conf['templates']:
         if not 'file' in spec:
             printe(_subsubstep('Invalid template configuration - missing "file" key in source templates specification.', C_RED))
@@ -683,6 +685,10 @@ def parse_yaml_config():
             if 'template' in spec:
                 printe(_subsubstep('Invalid template configuration - found "template" key in source templates specification alongside wildcard "file" key.', C_RED))
                 logging.critical('Invalid template configuration - found "template" key in source templates specification alongside wildcard "file" key.')
+                sys.exit(3)
+            if 'link' in spec:
+                printe(_subsubstep('Invalid template configuration - found "link" key in source templates specification alongside wildcard "file" key.', C_RED))
+                logging.critical('Invalid template configuration - found "link" key in source templates specification alongside wildcard "file" key.')
                 sys.exit(3)
             g = glob.glob(file_spec)
             if not g:
@@ -696,6 +702,8 @@ def parse_yaml_config():
                 template_paths[spec['file']] = spec['template']
             else:
                 template_paths[spec['file']] = spec['file']
+            if 'link' in spec:
+                symlinks[spec['link']] = spec['file']
     logging.debug('TEMPLATE FILE MAPPINGS: ' + str(template_paths))
     for f in template_paths:
         if not os.path.isfile(os.path.join(args.template_source, template_paths[f])):
@@ -1028,6 +1036,34 @@ def write_output():
         if w_o:
             for l in w_o:
                 logging.debug('OUTPUT RSYNC OUTPUT: ' + l)
+    if symlinks:
+        print(_substep('Creating symlinks...'))
+        logging.info('Creating symlinks...')
+        for raw_link_dst in symlinks:
+            link_src = os.path.join(args.output, symlinks[link_dst])
+            if raw_link_dst.startswith('/') or raw_link_dst.startswith('~'):
+                link_dst = os.path.expanduser(raw_link_dst)
+            else:
+                link_dst = os.path.join(args.output, raw_link_dst)
+            logging.debug('Linking "' + link_src + '" --> "' + link_dst + '"...')
+            if os.path.islink(link_dst):
+                logging.debug('Link destination already exists. Removing old link...')
+                try:
+                    os.unlink(link_dst)
+                except Exception as e:
+                    printe(_subsubstep('Unable to create symlink - unable to remove existing symlink at "' + link_dst + '" - ' + str(e) + '.', C_RED))
+                    logging.critical('Unable to create symlink - unable to remove existing symlink at "' + link_dst + '" - ' + str(e) + '.')
+                    sys.exit(6)
+            elif os.path.exists(link_dst):
+                printe(_subsubstep('Unable to create symlink - "' + link_dst + '" is an existing file or directory.', C_RED))
+                logging.critical('Unable to create symlink - "' + link_dst + '" is an existing file or directory.')
+                sys.exit(6)
+            try:
+                os.symlink(link_src, link_dst)
+            except Exception as e:
+                printe(_subsubstep('Unable to create symlink - ' + str(e) + '.', C_RED))
+                logging.critical('Unable to create symlink - ' + str(e) + '.')
+                sys.exit(6)
     if args.run:
         print(_substep(args.run))
         logging.info('Executing "' + args.run + '"...')
