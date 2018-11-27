@@ -456,6 +456,31 @@ def _subsubstep(instring, color=None):
 
 # ---------- Public Functions ----------
 
+def copy_files():
+    '''
+    Copies source files into the working directory.
+    '''
+    print(_step('Copying additional files...'))
+    logging.info('Copying additional files...')
+    for rel_dst_path in files_paths:
+        src_path = os.path.join(args.template_source, files_paths[rel_dst_path])
+        working_path = os.path.join(args.working_directory, rel_dst_path)
+        print(_substep(rel_dst_path))
+        logging.info('Copying "' + src_path + '" to "' + working_path + '"...')
+        if not os.path.isdir(os.path.dirname(working_path)):
+            try:
+                os.makedirs(os.path.dirname(working_path))
+            except Exception as e:
+                printe(_subsubstep('Unable to copy file to working directory - Unable to create parent directory - ' + str(e), C_RED))
+                logging.critical('Unable to copy file to working directory - Unable to create parent directory - ' + str(e))
+                sys.exit(5)
+        try:
+            shutil.copyfile(src_path, working_path)
+        except Exception as e:
+            printe(_subsubstep('Unable to copy file to working directory - ' + str(e), C_RED))
+            logging.critical('Unable to copy file to working directory - ' + str(e))
+            sys.exit(5)
+
 
 def get_displays():
     '''
@@ -620,9 +645,11 @@ def main():
         parse_yaml_config()
         # Set-up the jinja environment
         setup_jinja()
+        # Copy files (ones that don't need to be translated)
+        if files_paths: copy_files()
         # Translate templates (saving into the working directory)
         translate_templates()
-        # Write to the output directory
+        # Write to the output directory (and generate symlinks)
         write_output()
         logging.info('Configuration process complete.')
 
@@ -668,13 +695,18 @@ def parse_yaml_config():
         printe(_subsubstep('Invalid template configuration - "templates" specification is not a list of dictionaries.', C_RED))
         logging.critical('Invalid template configuration - "templates" specification is not a list of dictionaries.')
         sys.exit(3)
+    if 'files' in template_conf:
+        if not isinstance(template_conf['files'], list):
+            printe(_subsubstep('Invalid template configuration - "files" specification is not a list of dictionaries.', C_RED))
+            logging.critical('Invalid template configuration - "files" specification is not a list of dictionaries.')
+            sys.exit(3)
+    global symlinks
+    symlinks = {}
+    # symlinks[OUTPUT (RELATIVE)] = INPUT (RELATIVE)
     logging.debug('Extracting template file paths and symlinks...')
     global template_paths
     template_paths = {}
     # template_paths[OUTPUT (RELATIVE)] = INPUT (RELATIVE)
-    global symlinks
-    symlinks = {}
-    # symlinks[OUTPUT (RELATIVE)] = INPUT (RELATIVE)
     for spec in template_conf['templates']:
         if not 'file' in spec:
             printe(_subsubstep('Invalid template configuration - missing "file" key in source templates specification.', C_RED))
@@ -705,11 +737,54 @@ def parse_yaml_config():
             if 'link' in spec:
                 symlinks[spec['link']] = spec['file']
     logging.debug('TEMPLATE FILE MAPPINGS: ' + str(template_paths))
+    logging.debug('Validating template file mappings...')
     for f in template_paths:
         if not os.path.isfile(os.path.join(args.template_source, template_paths[f])):
             printe(_subsubstep('Invalid template configuration - specified source template "' + template_paths[f] + '" does not exist.', C_RED))
             logging.critical('Invalid template configuration - specified source template "' + template_paths[f] + '" does not exist.')
             sys.exit(3)
+    global files_paths
+    files_paths = {}
+    # files_paths[OUTPUT (RELATIVE)] = INPUT (RELATIVE)
+    if 'files' in template_conf:
+        logging.debug('Extracting additional file paths and symlinks...')
+        for spec in template_conf['files']:
+            if not 'dst' in spec:
+                printe(_subsubstep('Invalid template configuration - missing "dst" key in source files specification.', C_RED))
+                logging.critical('Invalid template configuration - missing "dst" key in source files specification.')
+                sys.exit(3)
+            dst_file = os.path.join(args.template_source, spec['dst'])
+            if '*' in spec['dst']:
+                if 'src' in spec:
+                    printe(_subsubstep('Invalid template configuration - found "src" key in source files specification alongside wildcard "dst" key.', C_RED))
+                    logging.critical('Invalid template configuration - found "src" key in source files specification alongside wildcard "dst" key.')
+                    sys.exit(3)
+                if 'link' in spec:
+                    printe(_subsubstep('Invalid template configuration - found "link" key in source files specification alongside wildcard "dst" key.', C_RED))
+                    logging.critical('Invalid template configuration - found "link" key in source files specification alongside wildcard "dst" key.')
+                    sys.exit(3)
+                g = glob.glob(dst_file)
+                if not g:
+                    printe(_subsubstep('Warning: No files found matching glob "' + dst_file + '".', C_ORANGE))
+                    logging.warning('No files found matching glob "' + dst_file + '".')
+                else:
+                    for x in g:
+                        files_paths[os.path.relpath(x, args.template_source)] = os.path.relpath(x, args.template_source)
+            else:
+                if 'src' in spec:
+                    files_paths[spec['dst']] = spec['src']
+                else:
+                    files_paths[spec['dst']] = spec['dst']
+                if 'link' in spec:
+                    symlinks[spec['link']] = spec['dst']
+    logging.debug('ADDITIONAL FILE MAPPINGS: ' + str(files_paths))
+    if files_paths:
+        logging.debug('Validating additional file mappings...')
+        for f in files_paths:
+            if not os.path.isfile(os.path.join(args.template_source, files_paths[f])):
+                printe(_subsubstep('Invalid template configuration - specified source file "' + files_paths[f] + '" does not exist.', C_RED))
+                logging.critical('Invalid template configuration - specified source file "' + files_paths[f] + '" does not exist.')
+                sys.exit(3)
 
     
 def print_jinja(message):
