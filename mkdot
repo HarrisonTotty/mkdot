@@ -1124,7 +1124,7 @@ def write_output():
             if os.path.islink(link_dst):
                 logging.debug('Link destination already exists. Removing old link...')
                 try:
-                    os.unlink(link_dst)
+                    if not args.dry_run: os.unlink(link_dst)
                 except Exception as e:
                     printe(_subsubstep('Unable to create symlink - unable to remove existing symlink at "' + link_dst + '" - ' + str(e) + '.', C_RED))
                     logging.critical('Unable to create symlink - unable to remove existing symlink at "' + link_dst + '" - ' + str(e) + '.')
@@ -1134,7 +1134,7 @@ def write_output():
                 logging.critical('Unable to create symlink - "' + link_dst + '" is an existing file or directory.')
                 sys.exit(6)
             try:
-                os.symlink(link_src, link_dst)
+                if not args.dry_run: os.symlink(link_src, link_dst)
             except Exception as e:
                 printe(_subsubstep('Unable to create symlink - ' + str(e) + '.', C_RED))
                 logging.critical('Unable to create symlink - ' + str(e) + '.')
