@@ -1115,7 +1115,7 @@ def write_output():
         print(_substep('Creating symlinks...'))
         logging.info('Creating symlinks...')
         for raw_link_dst in symlinks:
-            link_src = os.path.join(args.output, symlinks[link_dst])
+            link_src = os.path.join(args.output, symlinks[raw_link_dst])
             if raw_link_dst.startswith('/') or raw_link_dst.startswith('~'):
                 link_dst = os.path.expanduser(raw_link_dst)
             else:
