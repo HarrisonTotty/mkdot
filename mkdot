@@ -848,6 +848,7 @@ def setup_jinja():
             block_start_string    = args.block_start_string,
             comment_end_string    = args.comment_end_string,
             comment_start_string  = args.comment_start_string,
+            extensions            = ['jinja2.ext.do', 'jinja2.ext.loopcontrols'],
             loader                = fsloader,
             trim_blocks           = args.trim_jinja_blocks,
             variable_end_string   = args.variable_end_string,
