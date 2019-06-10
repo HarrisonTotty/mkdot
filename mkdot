@@ -460,6 +460,7 @@ def copy_files():
     '''
     Copies source files into the working directory.
     '''
+    EC = 5
     print(_step('Copying additional files...'))
     logging.info('Copying additional files...')
     for rel_dst_path in files_paths:
@@ -473,13 +474,13 @@ def copy_files():
             except Exception as e:
                 printe(_subsubstep('Unable to copy file to working directory - Unable to create parent directory - ' + str(e), C_RED))
                 logging.critical('Unable to copy file to working directory - Unable to create parent directory - ' + str(e))
-                sys.exit(5)
+                sys.exit(EC)
         try:
             shutil.copyfile(src_path, working_path)
         except Exception as e:
             printe(_subsubstep('Unable to copy file to working directory - ' + str(e), C_RED))
             logging.critical('Unable to copy file to working directory - ' + str(e))
-            sys.exit(5)
+            sys.exit(EC)
 
 
 def get_displays():
@@ -560,6 +561,7 @@ def handle_revert():
     '''
     Handles --revert.
     '''
+    EC = 7
     print(_step('Reverting changes...'))
     logging.info('Reverting changes...')
     if args.revert == 'DEFAULT':
@@ -577,14 +579,14 @@ def handle_revert():
         else:
             printe(_subsubstep('Unable to restore dotfiles - specified source directory does not exist.', C_RED))
             logging.critical('Unable to restore dotfiles - specified source directory does not exist.')
-        sys.exit(7)
+        sys.exit(EC)
     if not os.path.isdir(args.output):
         try:
             os.makedirs(args.output)
         except Exception as e:
             printe(_subsubstep('Unable to restore dotfiles - unable to create output directory - ' + str(e) + '.', C_RED))
             logging.critical('Unable to restore dotfiles - unable to create output directory - ' + str(e) + '.')
-            sys.exit(7)
+            sys.exit(EC)
     try:
         (revert_out, revert_ec) = _rsync(
             src = backup_dir.rstrip('/') + '/',
@@ -594,7 +596,7 @@ def handle_revert():
     except Exception as e:
         printe(_subsubstep('Unable to restore dotfiles - ' + str(e) + '.', C_RED))
         logging.critical('Unable to restore dotfiles - ' + str(e) + '.')
-        sys.exit(7)
+        sys.exit(EC)
     logging.debug('REVERT EXIT CODE: ' + str(revert_ec))
     if revert_ec != 0:
         if revert_out:
@@ -602,7 +604,7 @@ def handle_revert():
                 logging.critical('REVERT OUTPUT: ' + l)
         printe(_subsubstep('Unable to restore dotfiles - subprocess returned non-zero exit code.', C_RED))
         logging.critical('Unable to restore dotfiles - subprocess returned non-zero exit code.')
-        sys.exit(7)
+        sys.exit(EC)
     else:
         if revert_out:
             for l in revert_out:
@@ -661,6 +663,7 @@ def parse_yaml_config():
     '''
     Parses the template configuration YAML file into a global dictionary object.
     '''
+    EC = 3
     print(_step('Loading template configuration file...'))
     logging.info('Loading template configuration file...')
     print(_substep('Reading template configuration file...'))
@@ -671,7 +674,7 @@ def parse_yaml_config():
     except Exception as e:
         printe(_subsubstep('Unable to read template configuration file - ' + str(e) + '.', C_RED))
         logging.critical('Unable to read template configuration file - ' + str(e) + '.')
-        sys.exit(3)
+        sys.exit(EC)
     print(_substep('Parsing template configuration file...'))
     logging.debug('Parsing template configuration file...')
     try:
@@ -680,7 +683,7 @@ def parse_yaml_config():
     except Exception as e:
         printe(_subsubstep('Unable to parse template configuration file - ' + str(e) + '.', C_RED))
         logging.critical('Unable to parse template configuration file - ' + str(e) + '.')
-        sys.exit(3)
+        sys.exit(EC)
     logging.debug('----- Template Configuration -----')
     for x in template_conf:
         logging.debug(x + ' : ' + str(template_conf[x]))
@@ -690,16 +693,16 @@ def parse_yaml_config():
     if not 'templates' in template_conf:
         printe(_subsubstep('Invalid template configuration - "templates" specification not found.', C_RED))
         logging.critical('Invalid template configuration - "templates" specification not found.')
-        sys.exit(3)
+        sys.exit(EC)
     if not isinstance(template_conf['templates'], list):
         printe(_subsubstep('Invalid template configuration - "templates" specification is not a list of dictionaries.', C_RED))
         logging.critical('Invalid template configuration - "templates" specification is not a list of dictionaries.')
-        sys.exit(3)
+        sys.exit(EC)
     if 'files' in template_conf:
         if not isinstance(template_conf['files'], list):
             printe(_subsubstep('Invalid template configuration - "files" specification is not a list of dictionaries.', C_RED))
             logging.critical('Invalid template configuration - "files" specification is not a list of dictionaries.')
-            sys.exit(3)
+            sys.exit(EC)
     global symlinks
     symlinks = {}
     # symlinks[OUTPUT (RELATIVE)] = INPUT (RELATIVE)
@@ -711,17 +714,17 @@ def parse_yaml_config():
         if not 'file' in spec:
             printe(_subsubstep('Invalid template configuration - missing "file" key in source templates specification.', C_RED))
             logging.critical('Invalid template configuration - missing "file" key in source templates specification.')
-            sys.exit(3)
+            sys.exit(EC)
         file_spec = os.path.join(args.template_source, spec['file'])
         if '*' in spec['file']:
             if 'template' in spec:
                 printe(_subsubstep('Invalid template configuration - found "template" key in source templates specification alongside wildcard "file" key.', C_RED))
                 logging.critical('Invalid template configuration - found "template" key in source templates specification alongside wildcard "file" key.')
-                sys.exit(3)
+                sys.exit(EC)
             if 'link' in spec:
                 printe(_subsubstep('Invalid template configuration - found "link" key in source templates specification alongside wildcard "file" key.', C_RED))
                 logging.critical('Invalid template configuration - found "link" key in source templates specification alongside wildcard "file" key.')
-                sys.exit(3)
+                sys.exit(EC)
             g = glob.glob(file_spec)
             if not g:
                 printe(_subsubstep('Warning: No files found matching glob "' + file_spec + '".', C_ORANGE))
@@ -742,7 +745,7 @@ def parse_yaml_config():
         if not os.path.isfile(os.path.join(args.template_source, template_paths[f])):
             printe(_subsubstep('Invalid template configuration - specified source template "' + template_paths[f] + '" does not exist.', C_RED))
             logging.critical('Invalid template configuration - specified source template "' + template_paths[f] + '" does not exist.')
-            sys.exit(3)
+            sys.exit(EC)
     global files_paths
     files_paths = {}
     # files_paths[OUTPUT (RELATIVE)] = INPUT (RELATIVE)
@@ -752,17 +755,17 @@ def parse_yaml_config():
             if not 'dst' in spec:
                 printe(_subsubstep('Invalid template configuration - missing "dst" key in source files specification.', C_RED))
                 logging.critical('Invalid template configuration - missing "dst" key in source files specification.')
-                sys.exit(3)
+                sys.exit(EC)
             dst_file = os.path.join(args.template_source, spec['dst'])
             if '*' in spec['dst']:
                 if 'src' in spec:
                     printe(_subsubstep('Invalid template configuration - found "src" key in source files specification alongside wildcard "dst" key.', C_RED))
                     logging.critical('Invalid template configuration - found "src" key in source files specification alongside wildcard "dst" key.')
-                    sys.exit(3)
+                    sys.exit(EC)
                 if 'link' in spec:
                     printe(_subsubstep('Invalid template configuration - found "link" key in source files specification alongside wildcard "dst" key.', C_RED))
                     logging.critical('Invalid template configuration - found "link" key in source files specification alongside wildcard "dst" key.')
-                    sys.exit(3)
+                    sys.exit(EC)
                 g = glob.glob(dst_file)
                 if not g:
                     printe(_subsubstep('Warning: No files found matching glob "' + dst_file + '".', C_ORANGE))
@@ -784,7 +787,7 @@ def parse_yaml_config():
             if not os.path.isfile(os.path.join(args.template_source, files_paths[f])):
                 printe(_subsubstep('Invalid template configuration - specified source file "' + files_paths[f] + '" does not exist.', C_RED))
                 logging.critical('Invalid template configuration - specified source file "' + files_paths[f] + '" does not exist.')
-                sys.exit(3)
+                sys.exit(EC)
 
     
 def print_jinja(message):
@@ -829,6 +832,7 @@ def setup_jinja():
     '''
     Sets-up the Jinja environment for template parsing.
     '''
+    EC = 4
     print(_step('Setting-up templating environment...'))
     logging.info('Setting-up templating environment...')
     print(_substep('Initializing loader...'))
@@ -838,7 +842,7 @@ def setup_jinja():
     except Exception as e:
         printe(_subsubstep('Unable to initialize templating loader - ' + str(e) + '.', C_RED))
         logging.critical('Unable to initialize templating loader - ' + str(e) + '.')
-        sys.exit(4)
+        sys.exit(EC)
     print(_substep('Initializing environment...'))
     logging.debug('Initializing environment...')
     try:
@@ -857,7 +861,7 @@ def setup_jinja():
     except Exception as e:
         printe(_subsubstep('Unable to initialize templating environment - ' + str(e) + '.', C_RED))
         logging.critical('Unable to initialize templating environment - ' + str(e) + '.')
-        sys.exit(4)
+        sys.exit(EC)
     print(_substep('Initializing extensions...'))
     logging.debug('Initializing extensions...')
     try:
@@ -888,7 +892,7 @@ def setup_jinja():
     except Exception as e:
         printe(_subsubstep('Unable to initialize templating extensions - ' + str(e) + '.', C_RED))
         logging.critical('Unable to initialize templating extensions - ' + str(e) + '.')
-        sys.exit(4)
+        sys.exit(EC)
 
 
 def translate_templates():
@@ -896,6 +900,7 @@ def translate_templates():
     Translates the source templates into their final forms within the working
     directory.
     '''
+    EC = 5
     print(_step('Translating templates...'))
     logging.info('Translating templates...')
     global working_paths
@@ -911,7 +916,7 @@ def translate_templates():
         except Exception as e:
             printe(_subsubstep('Unable to load template - ' + str(e), C_RED))
             logging.critical('Unable to load template - ' + str(e))
-            sys.exit(5)
+            sys.exit(EC)
         try:
             try:
                 this = next(t for t in template_conf['templates'] if ('template' in t and t['template'] == rel_path) and t['file'] == output_path)
@@ -921,7 +926,7 @@ def translate_templates():
                 except StopIteration as e2:
                     printe(_subsubstep('Unable to render template - unable to match "this" variable to list item in "templates" specification.', C_RED))
                     logging.critical('Unable to render template - unable to match "this" variable to list item in "templates" specification.')
-                    sys.exit(5)
+                    sys.exit(EC)
             modified_conf = template_conf.copy()
             modified_conf['this'] = this
             modified_conf['file'] = filename
@@ -929,11 +934,11 @@ def translate_templates():
         except jinja2.TemplateSyntaxError as e:
             printe(_subsubstep('Unable to render template - template syntax error on line ' + str(e.lineno) + ' - ' + str(e), C_RED))
             logging.critical('Unable to render template - template syntax error on line ' + str(e.lineno) + ' - ' + str(e))
-            sys.exit(5)
+            sys.exit(EC)
         except Exception as e:
             printe(_subsubstep('Unable to render template - ' + str(e), C_RED))
             logging.critical('Unable to render template - ' + str(e))
-            sys.exit(5)
+            sys.exit(EC)
         logging.debug('Writing rendered configuration file to working directory...')
         working_path = os.path.join(args.working_directory, output_path)
         working_paths.append(working_path)
@@ -943,20 +948,21 @@ def translate_templates():
             except Exception as e:
                 printe(_subsubstep('Unable to write rendered file to working directory - Unable to create parent directory - ' + str(e), C_RED))
                 logging.critical('Unable to write rendered file to working directory - Unable to create parent directory - ' + str(e))
-                sys.exit(5)
+                sys.exit(EC)
         try:
             with open(working_path, 'w') as f:
                 f.write(rendered_template)
         except Exception as e:
             printe(_subsubstep('Unable to write rendered file to working directory - ' + str(e), C_RED))
             logging.critical('Unable to write rendered file to working directory - ' + str(e))
-            sys.exit(5)
+            sys.exit(EC)
 
 
 def validate_environment():
     '''
     Validates that the executing environment is sufficient to proceed.
     '''
+    EC = 2
     print(_step('Validating working environment...'))
     logging.info('Validating working environment...')
     print(_substep('Validating rsync executable path...'))
@@ -964,27 +970,27 @@ def validate_environment():
     if not os.path.isfile(args.rsync_executable):
         printe(_subsubstep('Specified rsync executable path does not exist.', C_RED))
         logging.critical('Specified rsync executable path does not exist.')
-        sys.exit(2)
+        sys.exit(EC)
     print(_substep('Validating template source directory...'))
     logging.debug('Validating template source directory...')
     if not os.path.isdir(args.template_source):
         printe(_subsubstep('Specified template source directory does not exist.', C_RED))
         logging.critical('Specified template source directory does not exist.')
-        sys.exit(2)
+        sys.exit(EC)
     print(_substep('Validating template configuration file...'))
     logging.debug('Validating template configuration file...')
     if not os.path.isfile(args.template_conf):
         if not os.path.isdir(args.template_conf):
             printe(_subsubstep('Specified template configuration path does not exist.', C_RED))
             logging.critical('Specified template configuration path does not exist.')
-            sys.exit(2)
+            sys.exit(EC)
         else:
             logging.debug('Selecting suitable template configuration file within specified directory...')
             files = [x for x in os.listdir(args.template_conf) if os.path.isfile(os.path.join(args.template_conf, x))]
             if not files:
                 printe(_subsubstep('Specified template configuration file directory does not contain any template configuration files.', C_RED))
                 logging.critical('Specified template configuration file directory does not contain any template configuration files.')
-                sys.exit(2)
+                sys.exit(EC)
             elif 'mkdot.yaml' in files:
                 args.template_conf = os.path.join(args.template_conf, 'mkdot.yaml')
             elif hostname + '.yaml' in files:
@@ -999,7 +1005,7 @@ def validate_environment():
                 if not found_match:
                     printe(_subsubstep('Specified template configuration file directory does not contain any selectable template configuration files.', C_RED))
                     logging.critical('Specified template configuration file directory does not contain any selectable template configuration files.')
-                    sys.exit(2)
+                    sys.exit(EC)
             printe(_subsubstep('Automatically selected template configuration file "' + args.template_conf + '".', C_BLUE))
             logging.info('Automatically selected template configuration file "' + args.template_conf + '".')
     print(_substep('Validating working directory...'))
@@ -1007,7 +1013,7 @@ def validate_environment():
     if os.path.isfile(args.working_directory):
         printe(_subsubstep('Specified working directory is an existing file.', C_RED))
         logging.critical('Specified working directory is an existing file.')
-        sys.exit(2)
+        sys.exit(EC)
     if os.path.isdir(args.working_directory):
         logging.debug('Working directory already exists. Deleting previous working directory...')
         try:
@@ -1015,14 +1021,14 @@ def validate_environment():
         except Exception as e:
             printe(_subsubstep('Unable to delete previous working directory - ' + str(e) + '.', C_RED))
             logging.critical('Unable to delete previous working directory - ' + str(e) + '.')
-            sys.exit(2)
+            sys.exit(EC)
     logging.debug('Creating working directory...')
     try:
         os.makedirs(args.working_directory)
     except Exception as e:
         printe(_subsubstep('Unable to create working directory - ' + str(e) + '.', C_RED))
         logging.critical('Unable to create working directory - ' + str(e) + '.')
-        sys.exit(2)
+        sys.exit(EC)
 
 
 def write_output():
@@ -1030,6 +1036,7 @@ def write_output():
     Transfers the newly generated configuration files from the working directory
     to the specified output directory.
     '''
+    EC = 6
     if args.dry_run:
         print(_step('Finalizing configuration process (DRY RUN)...'))
         logging.info('Finalizing configuration process (DRY RUN)...')
@@ -1047,7 +1054,7 @@ def write_output():
                 except Exception as e:
                     printe(_subsubstep('Unable to create backup directory - ' + str(e) + '.', C_RED))
                     logging.critical('Unable to create backup directory - ' + str(e) + '.')
-                    sys.exit(6)
+                    sys.exit(EC)
             print(_substep('Creating backup of existing dotfiles...'))
             logging.info('Creating backup of existing dotfiles...')
             try:
@@ -1059,7 +1066,7 @@ def write_output():
             except Exception as e:
                 printe(_subsubstep('Unable to create backup - ' + str(e) + '.', C_RED))
                 logging.critical('Unable to create backup - ' + str(e) + '.')
-                sys.exit(6)
+                sys.exit(EC)
             logging.debug('BACKUP RSYNC EXIT CODE: ' + str(b_ec))
             if b_ec != 0:
                 if b_o:
@@ -1067,7 +1074,7 @@ def write_output():
                         logging.critical('BACKUP RSYNC OUTPUT: ' + l)
                 printe(_subsubstep('Unable to create backup - subprocess returned non-zero exit code.', C_RED))
                 logging.critical('Unable to create backup - subprocess returned non-zero exit code.')
-                sys.exit(6)
+                sys.exit(EC)
             else:
                 if b_o:
                     for l in b_o:
@@ -1081,7 +1088,7 @@ def write_output():
         except Exception as e:
             printe(_subsubstep('Unable to create output directory - ' + str(e) + '.', C_RED))
             logging.critical('Unable to create output directory - ' + str(e) + '.')
-            sys.exit(6)
+            sys.exit(EC)
     print(_substep('Writing dotfiles to output directory...'))
     logging.info('Writing dotfiles to output directory...')
     rsync_args = '-a -h --progress'
@@ -1099,7 +1106,7 @@ def write_output():
     except Exception as e:
         printe(_subsubstep('Unable to write dotfiles to output directory - ' + str(e) + '.', C_RED))
         logging.critical('Unable to write dotfiles to output directory - ' + str(e) + '.')
-        sys.exit(6)
+        sys.exit(EC)
     logging.debug('OUTPUT RSYNC EXIT CODE: ' + str(w_ec))
     if w_ec != 0:
         if w_o:
@@ -1107,7 +1114,7 @@ def write_output():
                 logging.critical('OUTPUT RSYNC OUTPUT: ' + l)
         printe(_subsubstep('Unable to write dotfiles to output directory - subprocess returned non-zero exit code.', C_RED))
         logging.critical('Unable to write dotfiles to output directory - subprocess returned non-zero exit code.')
-        sys.exit(6)
+        sys.exit(EC)
     else:
         if w_o:
             for l in w_o:
@@ -1129,17 +1136,17 @@ def write_output():
                 except Exception as e:
                     printe(_subsubstep('Unable to create symlink - unable to remove existing symlink at "' + link_dst + '" - ' + str(e) + '.', C_RED))
                     logging.critical('Unable to create symlink - unable to remove existing symlink at "' + link_dst + '" - ' + str(e) + '.')
-                    sys.exit(6)
+                    sys.exit(EC)
             elif os.path.exists(link_dst):
                 printe(_subsubstep('Unable to create symlink - "' + link_dst + '" is an existing file or directory.', C_RED))
                 logging.critical('Unable to create symlink - "' + link_dst + '" is an existing file or directory.')
-                sys.exit(6)
+                sys.exit(EC)
             try:
                 if not args.dry_run: os.symlink(link_src, link_dst)
             except Exception as e:
                 printe(_subsubstep('Unable to create symlink - ' + str(e) + '.', C_RED))
                 logging.critical('Unable to create symlink - ' + str(e) + '.')
-                sys.exit(6)
+                sys.exit(EC)
     if args.run:
         print(_substep(args.run))
         logging.info('Executing "' + args.run + '"...')
@@ -1149,7 +1156,7 @@ def write_output():
             except Exception as e:
                 printe(_subsubstep('Unable to run command - ' + str(e) + '.', C_RED))
                 logging.critical('Unable to run command - ' + str(e) + '.')
-                sys.exit(6)
+                sys.exit(EC)
             logging.debug('COMMAND EXIT CODE: ' + str(w_ec))
             if w_ec != 0:
                 if w_o:
@@ -1157,7 +1164,7 @@ def write_output():
                         logging.critical('COMMAND OUTPUT: ' + l)
                 printe(_subsubstep('Warning: Command returned non-zero exit code.', C_ORANGE))
                 logging.warning('Command returned non-zero exit code.')
-                sys.exit(6)
+                sys.exit(EC)
             else:
                 if w_o:
                     for l in w_o:
